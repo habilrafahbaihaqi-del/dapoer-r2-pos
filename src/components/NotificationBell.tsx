@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/utils/supabase/client";
+import { Bell } from "lucide-react";
 
 interface AuditLog {
   id: string;
@@ -76,9 +77,10 @@ export default function NotificationBell() {
       {/* Tombol Lonceng Notifikasi */}
       <button
         onClick={toggleDropdown}
-        className="relative p-2 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors active:scale-95 flex items-center justify-center"
+        className="relative p-2 text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 rounded-lg transition-colors active:scale-95 flex items-center justify-center"
       >
-        <span className="text-xl">🔔</span>
+        {/* Ikon garis yang elegan sebagai pengganti emoji */}
+        <Bell size={20} strokeWidth={2} />
         {unreadCount > 0 && (
           <span className="absolute top-1 right-1 bg-red-500 text-white text-[10px] font-bold h-4 w-4 rounded-full flex items-center justify-center animate-bounce">
             {unreadCount}
