@@ -14,10 +14,10 @@ import {
   Store,
   ShieldCheck,
   LogOut,
-  User,
-  Settings,
-  Menu, // Tambahan Icon Hamburger
-  X, // Tambahan Icon Close
+  Crown,
+  ChevronDown,
+  Menu,
+  X,
 } from "lucide-react";
 
 export default function OwnerLayout({
@@ -29,11 +29,13 @@ export default function OwnerLayout({
   const router = useRouter();
   const supabase = createClient();
 
-  const [ownerName, setOwnerName] = useState("Owner");
+  // Inisialisasi default nama agar tidak kosong saat memuat data
+  const [ownerName, setOwnerName] = useState("Owner Dapoer R2");
+  const [ownerAvatar, setOwnerAvatar] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [timeString, setTimeString] = useState("");
   const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // State untuk Sidebar HP
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const profileDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -45,7 +47,7 @@ export default function OwnerLayout({
       if (user) {
         const { data: profile } = await supabase
           .from("profiles")
-          .select("name, role")
+          .select("name, role, avatar_url")
           .eq("id", user.id)
           .single();
 
@@ -55,7 +57,8 @@ export default function OwnerLayout({
           return;
         }
         setOwnerEmail(user.email || "");
-        setOwnerName(profile.name);
+        if (profile?.name) setOwnerName(profile.name);
+        if (profile?.avatar_url) setOwnerAvatar(profile.avatar_url);
       } else {
         router.push("/login");
       }
@@ -111,16 +114,20 @@ export default function OwnerLayout({
       icon: Package,
     },
     {
-      name: "Riwayat & Laporan",
+      name: "Riwayat Transaksi",
       href: "/dashboard/owner/riwayat",
       icon: FileText,
     },
-    { name: "Akun Kasir", href: "/dashboard/owner/kasir", icon: Users },
+    { name: "Manajemen Kasir", href: "/dashboard/owner/kasir", icon: Users },
   ];
 
   const settingItems = [
-    { name: "Profil Toko", href: "#", icon: Store },
-    { name: "Keamanan Akun", href: "#", icon: ShieldCheck },
+    { name: "Profil Toko", href: "/dashboard/owner/profil-toko", icon: Store },
+    {
+      name: "Keamanan Akun",
+      href: "/dashboard/owner/keamanan",
+      icon: ShieldCheck,
+    },
   ];
 
   const handleLogout = async () => {
@@ -140,7 +147,7 @@ export default function OwnerLayout({
           <Link
             key={item.name}
             href={item.href}
-            onClick={() => setIsSidebarOpen(false)} // Otomatis tutup sidebar di HP saat menu ditekan
+            onClick={() => setIsSidebarOpen(false)}
             className={`flex items-center gap-3 px-4 py-3 rounded-r-xl text-sm font-medium transition-all duration-200 ${
               isActive
                 ? "bg-[#FF5B37]/10 text-[#FF5B37] border-l-4 border-[#FF5B37] font-bold"
@@ -157,7 +164,7 @@ export default function OwnerLayout({
 
   return (
     <div className="flex min-h-screen bg-[#f4f7f6] font-jakarta">
-      {/* Backdrop Hitam Transparan untuk Layar HP */}
+      {/* Backdrop Mobile */}
       {isSidebarOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-30 lg:hidden transition-opacity"
@@ -165,7 +172,7 @@ export default function OwnerLayout({
         />
       )}
 
-      {/* Sidebar (Responsive Slider) */}
+      {/* Sidebar Kiri */}
       <aside
         className={`fixed inset-y-0 left-0 transform ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"} lg:relative lg:translate-x-0 transition-transform duration-300 ease-in-out w-64 bg-white border-r border-zinc-200 flex flex-col justify-between shadow-xl lg:shadow-sm z-40`}
       >
@@ -212,9 +219,9 @@ export default function OwnerLayout({
         </div>
       </aside>
 
-      {/* Konten Utama */}
+      {/* Sisi Konten Utama */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden w-full relative">
-        <header className="h-auto min-h-[5rem] py-3 lg:py-0 bg-white/80 backdrop-blur-md border-b border-zinc-200 flex flex-wrap lg:flex-nowrap items-center justify-between px-4 lg:px-8 z-10 shadow-sm gap-4">
+        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-4 lg:px-8 z-10 shadow-sm gap-4">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsSidebarOpen(true)}
@@ -223,11 +230,12 @@ export default function OwnerLayout({
               <Menu size={24} />
             </button>
             <div className="flex flex-col">
-              <span className="text-xs lg:text-sm text-zinc-400 font-medium font-jakarta">
+              <span className="text-xs text-zinc-400 font-medium font-jakarta">
                 Selamat datang kembali,
               </span>
+              {/* MENAMPILKAN NAMA LENGKAP PADA TEKS SAPAAN HEADER */}
               <span className="text-sm lg:text-lg font-bold text-zinc-800 font-inter leading-tight">
-                Halo, {ownerName.split(" ")[0]} 👋
+                Halo, {ownerName}
               </span>
             </div>
           </div>
@@ -240,15 +248,47 @@ export default function OwnerLayout({
             </div>
             <NotificationBell />
             <span className="text-zinc-200 hidden lg:inline">|</span>
+
+            {/* KONTROL PROFIL: Didesain Menyerupai Referensi Gambar Anda */}
             <div className="relative" ref={profileDropdownRef}>
               <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
-                className="h-10 w-10 rounded-xl bg-[#FF5B37]/10 border border-[#FF5B37]/30 flex items-center justify-center text-[#FF5B37] hover:bg-[#FF5B37]/20 transition-all"
+                className="flex items-center gap-3 px-3 py-1.5 border border-zinc-200 rounded-xl bg-white hover:bg-zinc-50 transition-all shadow-sm cursor-pointer active:scale-95 text-left select-none"
               >
-                <User size={20} strokeWidth={2.5} />
+                {/* Render Avatar Gambar atau Mahkota Default */}
+                {ownerAvatar ? (
+                  <div className="h-9 w-9 rounded-full overflow-hidden border-2 border-white shadow-sm shrink-0 bg-zinc-100">
+                    <img
+                      src={ownerAvatar}
+                      alt="Profile"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-9 w-9 rounded-full bg-red-700 flex items-center justify-center text-amber-400 shadow-inner shrink-0">
+                    <Crown size={18} fill="currentColor" strokeWidth={1.5} />
+                  </div>
+                )}
+
+                {/* Informasi Identitas Nama Lengkap Dinamis */}
+                <div className="hidden sm:flex flex-col max-w-[140px]">
+                  <span className="text-xs lg:text-sm font-bold text-zinc-800 font-inter leading-tight truncate">
+                    {ownerName}
+                  </span>
+                  <span className="text-[10px] text-zinc-400 font-jakarta mt-0.5 font-semibold">
+                    Owner
+                  </span>
+                </div>
+
+                <ChevronDown
+                  size={16}
+                  className="text-zinc-400 ml-1 hidden sm:block shrink-0"
+                />
               </button>
+
+              {/* Jendela Dropdown Keluar Akun */}
               {isProfileOpen && (
-                <div className="absolute right-0 mt-3 w-64 bg-white rounded-xl border border-zinc-200 shadow-xl z-50">
+                <div className="absolute right-0 mt-3 w-64 bg-white rounded-xl border border-zinc-200 shadow-xl z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-150">
                   <div className="p-4 bg-zinc-50 border-b border-zinc-100">
                     <p className="text-sm font-bold text-zinc-900 truncate">
                       {ownerName}
@@ -274,7 +314,6 @@ export default function OwnerLayout({
           </div>
         </header>
 
-        {/* Overflow pada main agar grafik bisa discroll ke bawah di HP */}
         <main className="flex-1 p-4 lg:p-8 overflow-y-auto overflow-x-hidden">
           {children}
         </main>
