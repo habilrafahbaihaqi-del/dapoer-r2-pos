@@ -76,7 +76,6 @@ export default function RiwayatTransaksiPage() {
   const fetchTransactions = async (start: string, end: string) => {
     setLoading(true);
     try {
-      // Mengambil data transaksi beserta relasi item, varian, dan nama produk
       let query = supabase
         .from("transactions")
         .select(
@@ -84,6 +83,7 @@ export default function RiwayatTransaksiPage() {
           id,
           created_at,
           total,
+          payment_method, 
           transaction_items (
             quantity,
             product_variants (
@@ -112,7 +112,6 @@ export default function RiwayatTransaksiPage() {
       if (error) throw error;
 
       if (data) {
-        // Memformat data MVP (menambahkan nomor invoice dummy berbasis ID dan tanggal)
         const formattedData = data.map((trx: any) => {
           const dateStr = new Date(trx.created_at)
             .toISOString()
@@ -122,7 +121,8 @@ export default function RiwayatTransaksiPage() {
           return {
             ...trx,
             invoice_number: `INV-${dateStr}-${shortId}`,
-            payment_method: "TUNAI", // Default untuk saat ini
+            // Mengambil metode pembayaran asli dari database (TUNAI/QRIS), jika kosong fallback ke TUNAI
+            payment_method: trx.payment_method || "TUNAI",
           };
         });
         setTransactions(formattedData as Transaction[]);

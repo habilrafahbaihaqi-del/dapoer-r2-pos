@@ -12,6 +12,8 @@ import {
   Lightbulb,
   X,
   Plus,
+  Edit2,
+  Check,
 } from "lucide-react";
 
 interface ProductWithCategory {
@@ -65,6 +67,11 @@ export default function ManajemenProdukPage() {
   const [newVariantName, setNewVariantName] = useState("");
   const [newVariantPrice, setNewVariantPrice] = useState("");
 
+  // --- STATE UNTUK MODE EDIT VARIAN ---
+  const [editingVariantId, setEditingVariantId] = useState<string | null>(null);
+  const [editVariantName, setEditVariantName] = useState("");
+  const [editVariantPrice, setEditVariantPrice] = useState("");
+
   useEffect(() => {
     fetchProducts();
     fetchCategories();
@@ -82,7 +89,6 @@ export default function ManajemenProdukPage() {
     }
   }, [searchTerm, products]);
 
-  // 1. UPDATE: Fetch Produk beserta Kalkulasi Real-time Varian & Harga Termurah
   const fetchProducts = async () => {
     setLoading(true);
     try {
@@ -107,7 +113,6 @@ export default function ManajemenProdukPage() {
           const prodVariants = prod.product_variants || [];
           const total_variants = prodVariants.length;
 
-          // Cari harga termurah, jika tidak ada varian set 0
           const min_price =
             total_variants > 0
               ? Math.min(...prodVariants.map((v: any) => Number(v.price)))
@@ -147,22 +152,18 @@ export default function ManajemenProdukPage() {
     }
   };
 
-  // Fungsi tambahan untuk memproses unggahan berkas ke Supabase Storage
   const uploadImage = async (file: File): Promise<string | null> => {
     try {
-      // Membuat nama file yang unik berdasarkan timestamp agar tidak saling tumpang tindih
       const fileExt = file.name.split(".").pop();
       const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
       const filePath = `${fileName}`;
 
-      // Mengunggah file ke bucket 'product-images'
       const { error: uploadError } = await supabase.storage
         .from("product-images")
         .upload(filePath, file);
 
       if (uploadError) throw uploadError;
 
-      // Mengambil URL publik dari file yang berhasil diunggah
       const { data } = supabase.storage
         .from("product-images")
         .getPublicUrl(filePath);
@@ -174,7 +175,6 @@ export default function ManajemenProdukPage() {
     }
   };
 
-  // Pembaruan fungsi handleAdd untuk mendukung unggah foto nyata
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProduct.name.trim() || !newProduct.category_id) {
@@ -186,7 +186,6 @@ export default function ManajemenProdukPage() {
     try {
       let finalImageUrl = null;
 
-      // Jika Owner memilih file gambar, proses unggah dijalankan terlebih dahulu
       if (newProduct.image) {
         finalImageUrl = await uploadImage(newProduct.image);
         if (!finalImageUrl) {
@@ -196,18 +195,41 @@ export default function ManajemenProdukPage() {
         }
       }
 
-      // Menyimpan data produk ke tabel database lengkap dengan URL gambarnya
       const { error } = await supabase.from("products").insert([
         {
           name: newProduct.name,
           category_id: newProduct.category_id,
-          image_url: finalImageUrl, // URL publik tersimpan di sini
+          image_url: finalImageUrl,
         },
       ]);
 
       if (error) throw error;
 
-      // Mereset form isian setelah berhasil
+      // --- KODE AUDIT LOG: TAMBAH PRODUK ---
+      // Menarik nama Owner yang sedang login
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      let userName = "Owner";
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("name")
+          .eq("id", user.id)
+          .single();
+        if (profile) userName = profile.name;
+      }
+
+      await supabase.from("audit_logs").insert([
+        {
+          user_name: userName,
+          role: "owner",
+          action: "TAMBAH_PRODUK",
+          description: `Menambahkan produk baru: ${newProduct.name}`,
+        },
+      ]);
+      // -------------------------------------
+
       setNewProduct({ name: "", category_id: "", image: null });
       alert("Produk baru berhasil disimpan!");
       fetchProducts();
@@ -218,7 +240,6 @@ export default function ManajemenProdukPage() {
     }
   };
 
-  // 2. UPDATE: Logika Hapus Aman (Hapus Varian dulu, baru Produk)
   const handleDelete = async (id: string) => {
     const confirmDelete = window.confirm(
       "Hapus produk ini secara permanen? Seluruh varian di dalamnya juga akan terhapus.",
@@ -226,13 +247,41 @@ export default function ManajemenProdukPage() {
     if (!confirmDelete) return;
 
     try {
-      // Langkah A: Hapus semua varian yang terkait dengan produk ini
-      await supabase.from("product_variants").delete().eq("product_id", id);
+      // Ambil nama produk sebelum dihapus untuk dicatat di log
+      const productToDelete = products.find((p) => p.id === id);
+      const productName = productToDelete
+        ? productToDelete.name
+        : "Produk Tidak Dikenal";
 
-      // Langkah B: Hapus produk utamanya
+      await supabase.from("product_variants").delete().eq("product_id", id);
       const { error } = await supabase.from("products").delete().eq("id", id);
 
       if (error) throw error;
+
+      // --- KODE AUDIT LOG: HAPUS PRODUK ---
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      let userName = "Owner";
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("name")
+          .eq("id", user.id)
+          .single();
+        if (profile) userName = profile.name;
+      }
+
+      await supabase.from("audit_logs").insert([
+        {
+          user_name: userName,
+          role: "owner",
+          action: "HAPUS_PRODUK",
+          description: `Menghapus produk: ${productName}`,
+        },
+      ]);
+      // ------------------------------------
+
       fetchProducts();
     } catch (error: any) {
       alert(`Gagal menghapus produk: ${error.message}`);
@@ -252,6 +301,7 @@ export default function ManajemenProdukPage() {
     setVariants([]);
     setNewVariantName("");
     setNewVariantPrice("");
+    cancelEditVariant(); // Reset mode edit saat modal ditutup
   };
 
   const fetchVariants = async (productId: string) => {
@@ -275,15 +325,15 @@ export default function ManajemenProdukPage() {
         product_id: selectedProduct.id,
         name: newVariantName,
         price: parseInt(newVariantPrice),
-        stock: 0, // Default stok 0 saat varian baru dibuat
+        stock: 0,
       },
     ]);
 
     if (!error) {
       setNewVariantName("");
       setNewVariantPrice("");
-      fetchVariants(selectedProduct.id); // Segarkan list di modal
-      fetchProducts(); // Segarkan tabel utama agar Total Varian update
+      fetchVariants(selectedProduct.id);
+      fetchProducts();
     } else {
       alert("Gagal menambahkan varian");
     }
@@ -297,6 +347,39 @@ export default function ManajemenProdukPage() {
     if (!error) {
       fetchVariants(selectedProduct!.id);
       fetchProducts();
+    }
+  };
+
+  // --- FUNGSI EDIT VARIAN ---
+  const startEditVariant = (variant: Variant) => {
+    setEditingVariantId(variant.id);
+    setEditVariantName(variant.name);
+    setEditVariantPrice(variant.price.toString());
+  };
+
+  const cancelEditVariant = () => {
+    setEditingVariantId(null);
+    setEditVariantName("");
+    setEditVariantPrice("");
+  };
+
+  const handleSaveEditVariant = async () => {
+    if (!editVariantName || !editVariantPrice) {
+      alert("Nama dan harga varian tidak boleh kosong.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("product_variants")
+      .update({ name: editVariantName, price: parseInt(editVariantPrice) })
+      .eq("id", editingVariantId);
+
+    if (!error) {
+      cancelEditVariant();
+      fetchVariants(selectedProduct!.id);
+      fetchProducts(); // Refresh tabel utama agar harga termurah (Mulai dari) bisa langsung update
+    } else {
+      alert(`Gagal memperbarui varian: ${error.message}`);
     }
   };
 
@@ -635,21 +718,71 @@ export default function ManajemenProdukPage() {
                       key={v.id}
                       className="flex items-center justify-between p-4 bg-white border border-zinc-200 rounded-xl hover:border-zinc-300 transition-colors"
                     >
-                      <div>
-                        <p className="font-bold text-zinc-800 font-inter text-sm">
-                          {v.name}
-                        </p>
-                        <p className="text-xs font-medium text-zinc-500 font-jakarta mt-0.5">
-                          Harga: Rp {v.price.toLocaleString("id-ID")}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteVariant(v.id)}
-                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Hapus Varian"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      {editingVariantId === v.id ? (
+                        // --- MODE EDIT ---
+                        <div className="flex-1 flex flex-col sm:flex-row gap-3 mr-4">
+                          <input
+                            type="text"
+                            value={editVariantName}
+                            onChange={(e) => setEditVariantName(e.target.value)}
+                            className="flex-1 px-3 py-1.5 border border-[#FF5B37] rounded-lg text-sm font-inter focus:outline-none focus:ring-2 focus:ring-[#FF5B37]/20"
+                            placeholder="Nama Varian"
+                          />
+                          <input
+                            type="number"
+                            value={editVariantPrice}
+                            onChange={(e) =>
+                              setEditVariantPrice(e.target.value)
+                            }
+                            className="w-full sm:w-32 px-3 py-1.5 border border-[#FF5B37] rounded-lg text-sm font-jakarta focus:outline-none focus:ring-2 focus:ring-[#FF5B37]/20"
+                            placeholder="Harga"
+                          />
+                          <div className="flex gap-2 justify-end mt-2 sm:mt-0">
+                            <button
+                              onClick={handleSaveEditVariant}
+                              className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors"
+                              title="Simpan Perubahan"
+                            >
+                              <Check size={16} strokeWidth={3} />
+                            </button>
+                            <button
+                              onClick={cancelEditVariant}
+                              className="p-2 bg-zinc-100 text-zinc-500 rounded-lg hover:bg-zinc-200 transition-colors"
+                              title="Batal Edit"
+                            >
+                              <X size={16} strokeWidth={2.5} />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // --- MODE VIEW ---
+                        <>
+                          <div>
+                            <p className="font-bold text-zinc-800 font-inter text-sm">
+                              {v.name}
+                            </p>
+                            <p className="text-xs font-medium text-zinc-500 font-jakarta mt-0.5">
+                              Harga: Rp {v.price.toLocaleString("id-ID")}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => startEditVariant(v)}
+                              className="p-2 text-zinc-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Edit Varian"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteVariant(v.id)}
+                              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Hapus Varian"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))
                 )}

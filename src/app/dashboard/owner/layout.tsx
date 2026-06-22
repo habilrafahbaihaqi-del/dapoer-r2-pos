@@ -221,7 +221,7 @@ export default function OwnerLayout({
 
       {/* Sisi Konten Utama */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden w-full relative">
-        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-4 lg:px-8 z-10 shadow-sm gap-4">
+        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-4 lg:px-8 z-50 shadow-sm gap-4">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsSidebarOpen(true)}
