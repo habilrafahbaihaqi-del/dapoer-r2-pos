@@ -35,13 +35,14 @@ interface Product {
 }
 
 interface CartItem {
-  cart_id: string; // Kombinasi product_id + variant_id
+  cart_id: string;
   product_id: string;
   variant_id: string;
   product_name: string;
   variant_name: string;
   price: number;
   quantity: number;
+  stock: number; // PERBAIKAN: Menyimpan data sisa stok untuk pembatasan tombol (+)
   image_url: string | null;
 }
 
@@ -53,19 +54,15 @@ export default function KasirUtamaPage() {
     [],
   );
 
-  // State Filter & Pencarian
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<string>("Semua");
 
-  // State Keranjang
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
-  // State Modal Pilih Varian
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isVariantModalOpen, setIsVariantModalOpen] = useState(false);
 
-  // State Modal Pembayaran (Checkout)
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<"TUNAI" | "QRIS">("TUNAI");
   const [amountPaid, setAmountPaid] = useState<number | "">("");
@@ -102,7 +99,6 @@ export default function KasirUtamaPage() {
     }
   };
 
-  // --- FILTERING LOGIC ---
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
       const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
@@ -112,14 +108,28 @@ export default function KasirUtamaPage() {
     });
   }, [products, search, activeCategory]);
 
-  // --- CART LOGIC ---
+  // --- CART LOGIC YANG DIPERBAIKI (CEGAH TRANSAKSI BARANG HABIS) ---
   const handleProductClick = (product: Product) => {
     if (!product.product_variants || product.product_variants.length === 0) {
       alert("Produk ini belum memiliki varian/harga. Silakan lapor Owner.");
       return;
     }
 
+    const totalStock = product.product_variants.reduce(
+      (sum, v) => sum + v.stock,
+      0,
+    );
+    if (totalStock <= 0) {
+      // Tolak jika semua varian stoknya 0
+      alert("Maaf, stok produk ini sedang kosong!");
+      return;
+    }
+
     if (product.product_variants.length === 1) {
+      if (product.product_variants[0].stock <= 0) {
+        alert("Maaf, stok produk ini sedang kosong!");
+        return;
+      }
       addToCart(product, product.product_variants[0]);
     } else {
       setSelectedProduct(product);
@@ -128,10 +138,22 @@ export default function KasirUtamaPage() {
   };
 
   const addToCart = (product: Product, variant: Variant) => {
+    if (variant.stock <= 0) {
+      alert("Maaf, stok varian ini sedang kosong!");
+      return;
+    }
+
     const cartId = `${product.id}-${variant.id}`;
     setCart((prev) => {
       const existing = prev.find((item) => item.cart_id === cartId);
       if (existing) {
+        // PERBAIKAN: Cek agar tidak melebihi stok
+        if (existing.quantity >= variant.stock) {
+          alert(
+            `Maksimal pesanan untuk ${variant.name} adalah ${variant.stock} pcs`,
+          );
+          return prev;
+        }
         return prev.map((item) =>
           item.cart_id === cartId
             ? { ...item, quantity: item.quantity + 1 }
@@ -148,6 +170,7 @@ export default function KasirUtamaPage() {
           variant_name: variant.name,
           price: variant.price,
           quantity: 1,
+          stock: variant.stock,
           image_url: product.image_url,
         },
       ];
@@ -160,6 +183,11 @@ export default function KasirUtamaPage() {
       prev.map((item) => {
         if (item.cart_id === cartId) {
           const newQty = item.quantity + delta;
+          // PERBAIKAN: Batasi tombol plus agar tidak lewat stok
+          if (newQty > item.stock) {
+            alert(`Hanya tersisa ${item.stock} pcs untuk produk ini.`);
+            return item;
+          }
           return newQty > 0 ? { ...item, quantity: newQty } : item;
         }
         return item;
@@ -181,7 +209,7 @@ export default function KasirUtamaPage() {
       ? amountPaid - cartTotal
       : 0;
 
-  // --- CHECKOUT LOGIC ---
+  // --- CHECKOUT LOGIC YANG DIPERBAIKI (PEMOTONGAN STOK OTOMATIS) ---
   const handleCheckout = async () => {
     if (cart.length === 0) return;
     if (
@@ -207,6 +235,7 @@ export default function KasirUtamaPage() {
         if (profile) cashierName = profile.name;
       }
 
+      // 1. Simpan Transaksi Utama
       const { data: trxData, error: trxError } = await supabase
         .from("transactions")
         .insert([
@@ -219,21 +248,40 @@ export default function KasirUtamaPage() {
         ])
         .select()
         .single();
-
       if (trxError) throw trxError;
 
+      // 2. Simpan Item Transaksi
       const itemsToInsert = cart.map((item) => ({
         transaction_id: trxData.id,
         variant_id: item.variant_id,
         quantity: item.quantity,
         price: item.price,
       }));
-
       const { error: itemsError } = await supabase
         .from("transaction_items")
         .insert(itemsToInsert);
       if (itemsError) throw itemsError;
 
+      // 3. PERBAIKAN: Loop untuk memotong stok setiap barang di database
+      for (const item of cart) {
+        // Kita tarik stok terbaru dari database (jaga-jaga jika ada kasir lain yang transaksi bersamaan)
+        const { data: currentVariant } = await supabase
+          .from("product_variants")
+          .select("stock")
+          .eq("id", item.variant_id)
+          .single();
+
+        if (currentVariant) {
+          // Kurangi stok, pastikan tidak sampai negatif
+          const newStock = Math.max(0, currentVariant.stock - item.quantity);
+          await supabase
+            .from("product_variants")
+            .update({ stock: newStock })
+            .eq("id", item.variant_id);
+        }
+      }
+
+      // 4. Catat Log
       await supabase.from("audit_logs").insert([
         {
           user_name: cashierName,
@@ -243,6 +291,8 @@ export default function KasirUtamaPage() {
         },
       ]);
 
+      // Refresh tampilan menu di background agar stok terbaru langsung terlihat saat modal ditutup
+      fetchProductsAndCategories();
       setCheckoutSuccess(true);
     } catch (error: any) {
       alert(`Gagal memproses transaksi: ${error.message}`);
@@ -260,11 +310,8 @@ export default function KasirUtamaPage() {
     setPaymentMethod("TUNAI");
   };
 
-  // --- KOMPONEN UI KERANJANG YANG DISEMPURNAKAN ---
-  // Menerima properti onClose agar tombol X hanya muncul dan berfungsi di tampilan HP
   const CartContent = ({ onClose }: { onClose?: () => void }) => (
     <div className="flex flex-col h-full bg-white">
-      {/* 1. PERBAIKAN HEADER: Tombol X dimasukkan ke dalam flex sejajar dengan item */}
       <div className="p-5 border-b border-zinc-100 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <ShoppingBag size={20} className="text-[#FF5B37]" />
@@ -276,7 +323,6 @@ export default function KasirUtamaPage() {
           <span className="bg-zinc-100 text-zinc-600 px-2.5 py-1 rounded-full text-xs font-bold font-jakarta">
             {cartItemsCount} Item
           </span>
-          {/* Tombol silang hanya dirender jika fungsi onClose diberikan (alias sedang di HP) */}
           {onClose && (
             <button
               onClick={onClose}
@@ -386,9 +432,8 @@ export default function KasirUtamaPage() {
 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100vh-112px)] lg:h-[calc(100vh-80px)] w-full relative">
-      {/* KIRI: KATALOG MENU (Bisa di-scroll) */}
+      {/* KIRI: KATALOG MENU */}
       <div className="flex-1 flex flex-col min-w-0 bg-[#f4f7f6]">
-        {/* Header Katalog: Pencarian & Kategori */}
         <div className="p-4 lg:p-6 shrink-0 space-y-4">
           <div className="relative">
             <Search
@@ -407,11 +452,7 @@ export default function KasirUtamaPage() {
           <div className="flex overflow-x-auto gap-2 pb-2 scrollbar-hide -mx-4 px-4 lg:mx-0 lg:px-0">
             <button
               onClick={() => setActiveCategory("Semua")}
-              className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${
-                activeCategory === "Semua"
-                  ? "bg-zinc-800 text-white border-zinc-800 shadow-md"
-                  : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300"
-              }`}
+              className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${activeCategory === "Semua" ? "bg-zinc-800 text-white border-zinc-800 shadow-md" : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300"}`}
             >
               Semua Menu
             </button>
@@ -419,11 +460,7 @@ export default function KasirUtamaPage() {
               <button
                 key={cat.id}
                 onClick={() => setActiveCategory(cat.name)}
-                className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${
-                  activeCategory === cat.name
-                    ? "bg-zinc-800 text-white border-zinc-800 shadow-md"
-                    : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300"
-                }`}
+                className={`px-5 py-2.5 rounded-full text-xs font-bold whitespace-nowrap transition-all border ${activeCategory === cat.name ? "bg-zinc-800 text-white border-zinc-800 shadow-md" : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300"}`}
               >
                 {cat.name}
               </button>
@@ -431,7 +468,6 @@ export default function KasirUtamaPage() {
           </div>
         </div>
 
-        {/* Grid Katalog Produk */}
         <div className="flex-1 overflow-y-auto px-4 lg:px-6 pb-24 lg:pb-6">
           {loading ? (
             <div className="flex items-center justify-center h-full text-zinc-400 font-jakarta animate-pulse">
@@ -449,12 +485,30 @@ export default function KasirUtamaPage() {
                     ? Math.min(...product.product_variants.map((v) => v.price))
                     : 0;
 
+                // Cek total stok untuk label HABIS
+                const totalStock = product.product_variants.reduce(
+                  (sum, v) => sum + v.stock,
+                  0,
+                );
+                const isOutOfStock = totalStock <= 0;
+
                 return (
                   <div
                     key={product.id}
                     onClick={() => handleProductClick(product)}
-                    className="bg-white rounded-2xl p-3 border border-zinc-100 shadow-sm hover:shadow-md hover:border-[#FF5B37]/30 transition-all cursor-pointer group flex flex-col active:scale-[0.98]"
+                    className={`bg-white rounded-2xl p-3 border border-zinc-100 shadow-sm transition-all flex flex-col relative overflow-hidden
+                      ${isOutOfStock ? "opacity-60 grayscale cursor-not-allowed" : "hover:shadow-md hover:border-[#FF5B37]/30 cursor-pointer group active:scale-[0.98]"}
+                    `}
                   >
+                    {/* Label HABIS */}
+                    {isOutOfStock && (
+                      <div className="absolute inset-0 bg-white/40 backdrop-blur-[1px] flex items-center justify-center z-10">
+                        <span className="bg-zinc-800 text-white px-3 py-1.5 rounded-lg text-xs font-black tracking-widest shadow-lg -rotate-12">
+                          HABIS
+                        </span>
+                      </div>
+                    )}
+
                     <div className="aspect-square bg-zinc-50 rounded-xl overflow-hidden mb-3 relative">
                       {product.image_url ? (
                         <img
@@ -467,13 +521,13 @@ export default function KasirUtamaPage() {
                           <ShoppingBag size={32} />
                         </div>
                       )}
-                      {product.product_variants.length > 1 && (
+                      {product.product_variants.length > 1 && !isOutOfStock && (
                         <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm text-white text-[9px] font-bold px-2 py-1 rounded-md">
                           {product.product_variants.length} Varian
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-col flex-1">
+                    <div className="flex flex-col flex-1 relative z-0">
                       <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1 truncate">
                         {product.categories?.name}
                       </p>
@@ -493,20 +547,18 @@ export default function KasirUtamaPage() {
         </div>
       </div>
 
-      {/* KANAN: KERANJANG (Statis di PC/Tablet) */}
+      {/* KANAN: KERANJANG (Statis) */}
       <div className="hidden lg:block w-[380px] shrink-0 border-l border-zinc-200 bg-white h-full z-10 shadow-[-4px_0_24px_rgba(0,0,0,0.02)]">
-        {/* Tidak melempar props onClose agar tombol silang tidak muncul di PC */}
         <CartContent />
       </div>
 
-      {/* 2. PERBAIKAN FAB KERANJANG: Dibuat selalu muncul tanpa pengecekan cart.length */}
+      {/* FAB KERANJANG */}
       <button
         onClick={() => setIsMobileCartOpen(true)}
         className="lg:hidden fixed bottom-24 right-4 z-40 bg-[#FF5B37] text-white p-4 rounded-2xl shadow-xl shadow-[#FF5B37]/30 flex items-center justify-center animate-in zoom-in active:scale-95 transition-transform"
       >
         <div className="relative">
           <ShoppingBag size={24} />
-          {/* Angka notifikasi hanya muncul jika keranjang tidak kosong */}
           {cartItemsCount > 0 && (
             <span className="absolute -top-2 -right-2 bg-white text-[#FF5B37] w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black border border-[#FF5B37]">
               {cartItemsCount}
@@ -515,9 +567,7 @@ export default function KasirUtamaPage() {
         </div>
       </button>
 
-      {/* 3. PERBAIKAN Z-INDEX: Dinaikkan menjadi z-[80], z-[90], dan z-[100] agar overlap navigasi bawah */}
-
-      {/* MODAL LACI KERANJANG (Khusus HP) */}
+      {/* MODAL LACI KERANJANG */}
       {isMobileCartOpen && (
         <div className="lg:hidden fixed inset-0 z-[80] flex flex-col justify-end">
           <div
@@ -525,13 +575,12 @@ export default function KasirUtamaPage() {
             onClick={() => setIsMobileCartOpen(false)}
           ></div>
           <div className="relative bg-white w-full h-[85vh] rounded-t-3xl overflow-hidden flex flex-col animate-in slide-in-from-bottom-full duration-300">
-            {/* Melempar onClose agar tombol silang muncul di HP */}
             <CartContent onClose={() => setIsMobileCartOpen(false)} />
           </div>
         </div>
       )}
 
-      {/* --- MODAL PILIH VARIAN --- */}
+      {/* MODAL PILIH VARIAN (Dengan Pengecekan Varian Habis) */}
       {isVariantModalOpen && selectedProduct && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 p-6">
@@ -553,26 +602,51 @@ export default function KasirUtamaPage() {
             </div>
 
             <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-              {selectedProduct.product_variants.map((variant) => (
-                <button
-                  key={variant.id}
-                  onClick={() => addToCart(selectedProduct, variant)}
-                  className="w-full flex items-center justify-between p-4 rounded-2xl border-2 border-zinc-100 hover:border-[#FF5B37] hover:bg-[#FF5B37]/5 transition-all group text-left"
-                >
-                  <span className="font-bold text-zinc-800 font-inter group-hover:text-[#FF5B37]">
-                    {variant.name}
-                  </span>
-                  <span className="text-sm font-bold text-zinc-500 group-hover:text-[#FF5B37]">
-                    Rp {variant.price.toLocaleString("id-ID")}
-                  </span>
-                </button>
-              ))}
+              {selectedProduct.product_variants.map((variant) => {
+                const isVarEmpty = variant.stock <= 0;
+                return (
+                  <button
+                    key={variant.id}
+                    disabled={isVarEmpty}
+                    onClick={() => addToCart(selectedProduct, variant)}
+                    className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all group text-left
+                      ${
+                        isVarEmpty
+                          ? "border-zinc-100 bg-zinc-50 opacity-60 cursor-not-allowed"
+                          : "border-zinc-100 hover:border-[#FF5B37] hover:bg-[#FF5B37]/5"
+                      }
+                    `}
+                  >
+                    <div>
+                      <span
+                        className={`font-bold font-inter block ${isVarEmpty ? "text-zinc-500" : "text-zinc-800 group-hover:text-[#FF5B37]"}`}
+                      >
+                        {variant.name}
+                      </span>
+                      {isVarEmpty ? (
+                        <span className="text-[10px] text-red-500 font-bold font-jakarta mt-0.5 block">
+                          Stok Habis
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-zinc-400 font-medium font-jakarta mt-0.5 block">
+                          Sisa {variant.stock} pcs
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className={`text-sm font-bold ${isVarEmpty ? "text-zinc-400" : "text-zinc-500 group-hover:text-[#FF5B37]"}`}
+                    >
+                      Rp {variant.price.toLocaleString("id-ID")}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* --- MODAL CHECKOUT PEMBAYARAN --- */}
+      {/* MODAL CHECKOUT PEMBAYARAN */}
       {isCheckoutModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10 duration-200">
@@ -689,7 +763,6 @@ export default function KasirUtamaPage() {
                 </div>
               </>
             ) : (
-              // TAMPILAN SUKSES
               <div className="p-10 flex flex-col items-center justify-center text-center space-y-4">
                 <div className="w-20 h-20 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center animate-in zoom-in-50 duration-500">
                   <CheckCircle2 size={40} strokeWidth={2.5} />

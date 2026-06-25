@@ -11,6 +11,7 @@ import {
   FileText,
   X,
   Receipt,
+  AlertCircle,
 } from "lucide-react";
 
 interface TransactionItem {
@@ -28,6 +29,7 @@ interface Transaction {
   total: number;
   invoice_number: string;
   payment_method: string;
+  status?: string;
   transaction_items: TransactionItem[];
 }
 
@@ -57,11 +59,17 @@ export default function RiwayatTransaksiPage() {
 
   useEffect(() => {
     fetchStoreSettings();
-    // Set default tanggal hari ini
-    const today = new Date().toISOString().split("T")[0];
-    setStartDate(today);
-    setEndDate(today);
-    fetchTransactions(today, today);
+
+    // PERBAIKAN 1: Mengambil tanggal "Hari Ini" murni berdasarkan zona waktu komputer lokal Anda
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const localToday = `${year}-${month}-${day}`;
+
+    setStartDate(localToday);
+    setEndDate(localToday);
+    fetchTransactions(localToday, localToday);
   }, []);
 
   const fetchStoreSettings = async () => {
@@ -84,6 +92,7 @@ export default function RiwayatTransaksiPage() {
           created_at,
           total,
           payment_method, 
+          status, 
           transaction_items (
             quantity,
             product_variants (
@@ -96,14 +105,13 @@ export default function RiwayatTransaksiPage() {
         )
         .order("created_at", { ascending: false });
 
+      // PERBAIKAN 2: Memaksa JavaScript membaca batas awal (00:00:00) dan akhir (23:59:59) hari pada zona waktu lokal
       if (start) {
-        const startDateTime = new Date(start);
-        startDateTime.setHours(0, 0, 0, 0);
+        const startDateTime = new Date(`${start}T00:00:00`);
         query = query.gte("created_at", startDateTime.toISOString());
       }
       if (end) {
-        const endDateTime = new Date(end);
-        endDateTime.setHours(23, 59, 59, 999);
+        const endDateTime = new Date(`${end}T23:59:59.999`);
         query = query.lte("created_at", endDateTime.toISOString());
       }
 
@@ -123,9 +131,12 @@ export default function RiwayatTransaksiPage() {
             invoice_number: `INV-${dateStr}-${shortId}`,
             // Mengambil metode pembayaran asli dari database (TUNAI/QRIS), jika kosong fallback ke TUNAI
             payment_method: trx.payment_method || "TUNAI",
+            status: trx.status || "SUKSES", // Fallback status jika nilainya kosong
           };
         });
-        setTransactions(formattedData as Transaction[]);
+
+        // PERBAIKAN 3: Mencegah error strict typing dari TypeScript
+        setTransactions(formattedData as any as Transaction[]);
       }
     } catch (error) {
       console.error("Gagal memuat transaksi:", error);
@@ -263,7 +274,7 @@ export default function RiwayatTransaksiPage() {
                 <th className="px-6 py-4 font-bold text-zinc-400 text-[11px] uppercase tracking-widest font-inter">
                   Nomor Invoice
                 </th>
-                <th className="px-6 py-4 font-bold text-zinc-400 text-[11px] uppercase tracking-widest font-inter text-center">
+                <th className="px-6 py-4 font-bold text-zinc-400 text-[11px] uppercase tracking-widest font-inter">
                   Metode Pembayaran
                 </th>
                 <th className="px-6 py-4 font-bold text-zinc-400 text-[11px] uppercase tracking-widest font-inter">
@@ -294,41 +305,75 @@ export default function RiwayatTransaksiPage() {
                   </td>
                 </tr>
               ) : (
-                transactions.map((trx, index) => (
-                  <tr
-                    key={trx.id}
-                    className="group hover:bg-zinc-50/50 transition-colors"
-                  >
-                    <td className="px-6 py-4 text-sm text-zinc-500 font-inter text-center">
-                      {index + 1}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-zinc-700 font-jakarta">
-                      {formatDate(trx.created_at)}
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="font-bold text-zinc-800 font-inter text-sm">
-                        {trx.invoice_number}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span className="inline-flex items-center px-3 py-1 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100 text-[11px] font-bold font-jakarta uppercase tracking-wider">
-                        {trx.payment_method}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 font-bold text-red-600 font-inter text-sm">
-                      Rp {trx.total.toLocaleString("id-ID")}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <button
-                        onClick={() => openReceiptModal(trx)}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 transition-colors rounded-lg font-bold text-xs font-inter border border-red-100 active:scale-95"
+                transactions.map((trx, index) => {
+                  const isCanceled = trx.status === "DIBATALKAN";
+
+                  return (
+                    <tr
+                      key={trx.id}
+                      className={`group transition-colors ${
+                        isCanceled
+                          ? "bg-red-50/30 hover:bg-red-50/50"
+                          : "hover:bg-zinc-50/50"
+                      }`}
+                    >
+                      <td className="px-6 py-4 text-sm text-zinc-500 font-inter text-center">
+                        {index + 1}
+                      </td>
+                      <td className="px-6 py-4 text-sm text-zinc-700 font-jakarta">
+                        {formatDate(trx.created_at)}
+                      </td>
+                      <td className="px-6 py-4">
+                        <span
+                          className={`font-bold font-inter text-sm ${isCanceled ? "text-zinc-500" : "text-zinc-800"}`}
+                        >
+                          {trx.invoice_number}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`inline-flex items-center px-3 py-1 rounded-full border text-[11px] font-bold font-jakarta uppercase tracking-wider ${
+                              isCanceled
+                                ? "bg-zinc-100 text-zinc-400 border-zinc-200"
+                                : "bg-emerald-50 text-emerald-600 border-emerald-100"
+                            }`}
+                          >
+                            {trx.payment_method}
+                          </span>
+
+                          {/* LENCANA DIBATALKAN */}
+                          {isCanceled && (
+                            <span className="flex items-center gap-1 px-2.5 py-1 bg-red-100 text-red-600 border border-red-200 text-[10px] font-black rounded-full uppercase tracking-widest animate-pulse shadow-sm">
+                              <AlertCircle size={12} /> Batal
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Teks tercoret untuk transaksi batal */}
+                      <td
+                        className={`px-6 py-4 font-bold font-inter text-sm ${
+                          isCanceled
+                            ? "text-zinc-400 line-through"
+                            : "text-red-600"
+                        }`}
                       >
-                        <Eye size={14} />
-                        Lihat Detail
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                        Rp {trx.total.toLocaleString("id-ID")}
+                      </td>
+
+                      <td className="px-6 py-4 text-center">
+                        <button
+                          onClick={() => openReceiptModal(trx)}
+                          className="inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-50 text-zinc-600 hover:bg-zinc-100 transition-colors rounded-lg font-bold text-xs font-inter border border-zinc-200 active:scale-95"
+                        >
+                          <Eye size={14} />
+                          Lihat Detail
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -359,9 +404,20 @@ export default function RiwayatTransaksiPage() {
               </button>
             </div>
 
-            {/* Area Pratinjau Kertas Nota (Persis seperti Profil Toko) */}
-            <div className="p-6 bg-zinc-100 flex justify-center">
-              <div className="bg-white rounded-lg shadow-sm p-5 w-full relative font-mono text-zinc-700 text-xs border border-zinc-200">
+            {/* Area Pratinjau Kertas Nota */}
+            <div className="p-6 bg-zinc-100 flex justify-center relative overflow-hidden">
+              <div
+                className={`bg-white rounded-lg shadow-sm p-5 w-full relative font-mono text-zinc-700 text-xs border border-zinc-200 ${selectedTransaction.status === "DIBATALKAN" ? "opacity-80" : ""}`}
+              >
+                {/* STEMPEL DIBATALKAN (Hanya muncul jika status dibatalkan) */}
+                {selectedTransaction.status === "DIBATALKAN" && (
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 overflow-hidden">
+                    <div className="border-4 border-red-500 text-red-500 text-4xl font-black uppercase tracking-widest px-6 py-2 -rotate-12 opacity-30 rounded-xl">
+                      DIBATALKAN
+                    </div>
+                  </div>
+                )}
+
                 <div className="absolute top-0 inset-x-0 h-1 bg-[linear-gradient(45deg,transparent_33.333%,#fff_33.333%,#fff_66.667%,transparent_66.667%),linear-gradient(-45deg,transparent_33.333%,#fff_33.333%,#fff_66.667%,transparent_66.667%)] bg-[size:8px_8px] -mt-1" />
 
                 <div className="space-y-4">
