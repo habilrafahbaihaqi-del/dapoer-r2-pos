@@ -1,34 +1,35 @@
 import type { Metadata } from "next";
-import { Inter, Plus_Jakarta_Sans } from "next/font/google";
+import { Plus_Jakarta_Sans, Inter } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-});
-
+// 1. Inisialisasi Plus Jakarta Sans untuk teks isi/body
 const plusJakartaSans = Plus_Jakarta_Sans({
   subsets: ["latin"],
   variable: "--font-jakarta",
+  display: "swap",
+});
+
+// 2. Inisialisasi Inter untuk teks judul/headers
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "Dapoer R2 POS",
-  description: "Point of Sale System for Dapoer R2",
+  title: "Dapoer R2 - POS System",
+  description: "Sistem Aplikasi Kasir Berbasis PWA Modern",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="id">
-      <body
-        className={`${plusJakartaSans.className} ${inter.variable} antialiased`}
-      >
-        {children}
-      </body>
+    // 3. Suntikkan variabel font ke dalam class tag html
+    <html lang="id" className={`${plusJakartaSans.variable} ${inter.variable}`}>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }
