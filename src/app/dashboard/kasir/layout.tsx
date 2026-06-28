@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
@@ -12,9 +12,9 @@ import {
   Settings,
   LogOut,
   Store,
-  UserCircle,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
 } from "lucide-react";
 import NotificationBell from "@/components/NotificationBell";
 
@@ -34,15 +34,23 @@ export default function KasirLayout({
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+
+  // State Data Identitas
   const [profileName, setProfileName] = useState("Kasir");
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [storeName, setStoreName] = useState("Dapoer R2");
   const [currentTime, setCurrentTime] = useState("");
 
-  // STATE BARU: Mengontrol sidebar buka/tutup di PC
+  // State Kontrol UI
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
   useEffect(() => {
     fetchUserData();
+
+    // SINKRONISASI REAL-TIME DARI PENGATURAN PROFIL
+    // Mendengarkan event 'profileUpdated' yang dipicu saat kasir menyimpan nama/avatar baru
+    window.addEventListener("profileUpdated", fetchUserData);
 
     const updateTime = () => {
       const now = new Date();
@@ -64,7 +72,12 @@ export default function KasirLayout({
 
     updateTime();
     const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
+
+    // Pembersihan event listener saat komponen dibongkar
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("profileUpdated", fetchUserData);
+    };
   }, []);
 
   const fetchUserData = async () => {
@@ -74,10 +87,14 @@ export default function KasirLayout({
     if (user) {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("name")
+        .select("name, avatar_url")
         .eq("id", user.id)
         .single();
-      if (profile) setProfileName(profile.name);
+
+      if (profile) {
+        setProfileName(profile.name || "Kasir");
+        setAvatarUrl(profile.avatar_url || null);
+      }
     }
 
     const { data: store } = await supabase
@@ -89,15 +106,36 @@ export default function KasirLayout({
   };
 
   const handleLogout = async () => {
-    const confirmLogout = window.confirm("Apakah Anda yakin ingin keluar?");
+    const confirmLogout = window.confirm(
+      "Apakah Anda yakin ingin keluar dari sistem?",
+    );
     if (!confirmLogout) return;
+
+    // Catat logout ke audit log
+    await supabase.from("audit_logs").insert([
+      {
+        user_name: profileName,
+        role: "kasir",
+        action: "LOGOUT",
+        description:
+          "Kasir mengakhiri sesi dan keluar melalui Dropdown Layout.",
+      },
+    ]);
 
     await supabase.auth.signOut();
     router.push("/login");
   };
 
   return (
-    <div className="min-h-screen bg-[#f4f7f6] flex font-jakarta overflow-hidden">
+    <div className="min-h-screen bg-[#f4f7f6] flex font-jakarta overflow-hidden relative">
+      {/* INVISIBLE BACKDROP UNTUK MENUTUP DROPDOWN KETIKA KLIK DI LUAR */}
+      {isDropdownOpen && (
+        <div
+          className="fixed inset-0 z-[55]"
+          onClick={() => setIsDropdownOpen(false)}
+        />
+      )}
+
       {/* =========================================
           1. SIDEBAR NAVIGATION (KHUSUS PC/TABLET)
       ============================================= */}
@@ -157,7 +195,7 @@ export default function KasirLayout({
               <Link
                 key={item.name}
                 href={item.href}
-                title={!isSidebarOpen ? item.name : undefined} // Tooltip bawaan saat ditutup
+                title={!isSidebarOpen ? item.name : undefined}
                 className={`flex items-center gap-3 px-3.5 py-3 rounded-xl transition-all duration-200 font-bold text-sm whitespace-nowrap overflow-hidden
                   ${
                     isActive
@@ -217,7 +255,6 @@ export default function KasirLayout({
         <header className="h-20 bg-white/80 backdrop-blur-md border-b border-zinc-200 flex items-center justify-between px-4 lg:px-8 z-40 sticky top-0 shadow-sm shrink-0">
           {/* Sisi Kiri Header */}
           <div className="flex items-center gap-3">
-            {/* Tampil HANYA di HP: Ikon Toko & Nama Toko */}
             <div className="flex md:hidden items-center gap-2.5">
               <div className="w-8 h-8 bg-gradient-to-br from-[#FF5B37] to-[#ff7e61] rounded-lg flex items-center justify-center text-white shadow-sm shrink-0">
                 <Store size={16} strokeWidth={2.5} />
@@ -227,7 +264,6 @@ export default function KasirLayout({
               </h2>
             </div>
 
-            {/* Tampil HANYA di PC/Tablet: Sapaan Selamat Datang */}
             <div className="hidden md:block">
               <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest">
                 Selamat Datang,
@@ -250,22 +286,86 @@ export default function KasirLayout({
 
             <div className="h-8 w-[1px] bg-zinc-200 hidden md:block"></div>
 
-            <Link
-              href="/dashboard/kasir/pengaturan"
-              className="flex items-center gap-3 hover:bg-zinc-50 p-1.5 pr-3 rounded-full transition-colors border border-transparent hover:border-zinc-200"
-            >
-              <div className="w-9 h-9 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold text-sm shadow-inner shrink-0">
-                <UserCircle size={20} />
-              </div>
-              <div className="hidden lg:block text-left">
-                <p className="text-sm font-bold text-zinc-800 font-inter leading-none truncate max-w-[100px]">
-                  {profileName}
-                </p>
-                <p className="text-[10px] text-zinc-400 font-medium mt-0.5">
-                  Role: Kasir
-                </p>
-              </div>
-            </Link>
+            {/* DROPDOWN PROFIL */}
+            <div className="relative z-[60]">
+              <button
+                onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                className={`flex items-center gap-2 md:gap-3 p-1.5 md:pr-3 rounded-full transition-all border outline-none
+                  ${
+                    isDropdownOpen
+                      ? "bg-zinc-50 border-zinc-200 ring-2 ring-[#FF5B37]/20"
+                      : "border-transparent hover:bg-zinc-50 hover:border-zinc-200"
+                  }
+                `}
+              >
+                {/* AVATAR RENDERER */}
+                <div className="w-9 h-9 rounded-full bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-500 font-bold font-inter text-sm shadow-inner shrink-0 overflow-hidden">
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={profileName}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : profileName ? (
+                    profileName.charAt(0).toUpperCase()
+                  ) : (
+                    "K"
+                  )}
+                </div>
+
+                <div className="hidden lg:block text-left">
+                  <p className="text-sm font-bold text-zinc-800 font-inter leading-none truncate max-w-[100px]">
+                    {profileName}
+                  </p>
+                  <p className="text-[10px] text-zinc-400 font-medium mt-0.5">
+                    Role: Kasir
+                  </p>
+                </div>
+
+                <ChevronDown
+                  size={14}
+                  className={`hidden lg:block text-zinc-400 transition-transform duration-200 ${isDropdownOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+
+              {/* KOTAK MENU DROPDOWN */}
+              {isDropdownOpen && (
+                <div className="absolute right-0 mt-3 w-56 bg-white rounded-2xl border border-zinc-200 shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="p-4 border-b border-zinc-100 bg-zinc-50/50">
+                    <p className="text-xs font-bold text-zinc-400 uppercase tracking-widest mb-1">
+                      Masuk Sebagai
+                    </p>
+                    <p className="font-bold text-zinc-800 font-inter truncate">
+                      {profileName}
+                    </p>
+                  </div>
+
+                  <div className="p-2 space-y-1">
+                    <Link
+                      href="/dashboard/kasir/pengaturan"
+                      onClick={() => setIsDropdownOpen(false)}
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-zinc-100 text-zinc-700 hover:text-zinc-900 transition-colors text-sm font-bold font-inter"
+                    >
+                      <Settings size={16} className="text-zinc-400" />
+                      Pengaturan Akun
+                    </Link>
+                  </div>
+
+                  <div className="p-2 border-t border-zinc-100">
+                    <button
+                      onClick={() => {
+                        setIsDropdownOpen(false);
+                        handleLogout();
+                      }}
+                      className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl hover:bg-red-50 text-red-500 hover:text-red-600 transition-colors text-sm font-bold font-inter"
+                    >
+                      <LogOut size={16} />
+                      Keluar (Logout)
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </header>
 
@@ -278,7 +378,7 @@ export default function KasirLayout({
       {/* =========================================
           3. BOTTOM NAVIGATION (KHUSUS HP/MOBILE)
       ============================================= */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-zinc-200 z-50 flex justify-around items-center h-[72px] pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.06)] px-1">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-zinc-200 z-40 flex justify-around items-center h-[72px] pb-safe shadow-[0_-10px_40px_rgba(0,0,0,0.06)] px-1">
         {navItems.map((item) => {
           const isActive = pathname === item.href;
           const Icon = item.icon;
