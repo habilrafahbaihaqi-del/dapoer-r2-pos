@@ -36,7 +36,6 @@ export default function ManajemenKasirPage() {
     fetchCashiers();
   }, []);
 
-  // 1. PERBAIKAN: Memanggil email asli dari database
   const fetchCashiers = async () => {
     setLoading(true);
     try {
@@ -57,7 +56,7 @@ export default function ManajemenKasirPage() {
         const formattedCashiers = cashierRows.map((cashier) => ({
           id: cashier.id,
           name: cashier.name,
-          email: cashier.email || "-", // Menampilkan email asli dari tabel
+          email: cashier.email || "-",
         }));
 
         setCashiers(formattedCashiers);
@@ -69,8 +68,6 @@ export default function ManajemenKasirPage() {
     }
   };
 
-  // 2. PERBAIKAN: Menyimpan input email asli ke database
-  // PERBAIKAN: Memanggil API Route backend yang sudah dilengkapi Service Role
   const handleAddCashier = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newEmail.trim() || !newPassword) return;
@@ -81,7 +78,6 @@ export default function ManajemenKasirPage() {
 
     setIsSubmitting(true);
     try {
-      // Mengirim data ke API Route kita
       const response = await fetch("/api/create-cashier", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -112,16 +108,29 @@ export default function ManajemenKasirPage() {
     }
   };
 
+  // PERBAIKAN: Fungsi Hard Delete menembus auth.users via API Route
   const handleDeleteCashier = async (id: string, name: string) => {
     const confirmDelete = window.confirm(
-      `Apakah Anda yakin ingin menghapus akses kasir untuk ${name}?`,
+      `Yakin ingin menghapus permanen kasir ${name}? Email akan dibebaskan dan bisa digunakan kembali.`,
     );
     if (!confirmDelete) return;
 
     try {
-      const { error } = await supabase.from("profiles").delete().eq("id", id);
-      if (error) throw error;
-      fetchCashiers();
+      // Memanggil API Route yang sudah dilengkapi Service Role Key
+      const response = await fetch("/api/delete-kasir", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: id }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Gagal menghapus dari sistem Auth");
+      }
+
+      alert("Kasir berhasil dihapus permanen!");
+      fetchCashiers(); // Segarkan tabel kasir
     } catch (error: any) {
       alert(`Gagal menghapus kasir: ${error.message}`);
     }

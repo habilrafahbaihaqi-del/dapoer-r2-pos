@@ -72,6 +72,7 @@ export default function OwnerDashboard() {
       let query = supabase
         .from("transactions")
         .select("id, total, created_at")
+        .eq("status", "SUKSES")
         .gte("created_at", startISO);
       if (range !== "all") query = query.lte("created_at", endISO);
 

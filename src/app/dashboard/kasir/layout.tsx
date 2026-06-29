@@ -45,11 +45,13 @@ export default function KasirLayout({
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
+  // PERBAIKAN: Ref untuk mengontrol dropdown secara elegan
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     fetchUserData();
 
     // SINKRONISASI REAL-TIME DARI PENGATURAN PROFIL
-    // Mendengarkan event 'profileUpdated' yang dipicu saat kasir menyimpan nama/avatar baru
     window.addEventListener("profileUpdated", fetchUserData);
 
     const updateTime = () => {
@@ -73,10 +75,22 @@ export default function KasirLayout({
     updateTime();
     const interval = setInterval(updateTime, 1000);
 
+    // PERBAIKAN: Hook pendeteksi klik di luar dropdown
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+
     // Pembersihan event listener saat komponen dibongkar
     return () => {
       clearInterval(interval);
       window.removeEventListener("profileUpdated", fetchUserData);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
 
@@ -128,14 +142,6 @@ export default function KasirLayout({
 
   return (
     <div className="min-h-screen bg-[#f4f7f6] flex font-jakarta overflow-hidden relative">
-      {/* INVISIBLE BACKDROP UNTUK MENUTUP DROPDOWN KETIKA KLIK DI LUAR */}
-      {isDropdownOpen && (
-        <div
-          className="fixed inset-0 z-[55]"
-          onClick={() => setIsDropdownOpen(false)}
-        />
-      )}
-
       {/* =========================================
           1. SIDEBAR NAVIGATION (KHUSUS PC/TABLET)
       ============================================= */}
@@ -286,8 +292,8 @@ export default function KasirLayout({
 
             <div className="h-8 w-[1px] bg-zinc-200 hidden md:block"></div>
 
-            {/* DROPDOWN PROFIL */}
-            <div className="relative z-[60]">
+            {/* PERBAIKAN: DROPDOWN PROFIL DENGAN REF */}
+            <div className="relative z-[60]" ref={dropdownRef}>
               <button
                 onClick={() => setIsDropdownOpen(!isDropdownOpen)}
                 className={`flex items-center gap-2 md:gap-3 p-1.5 md:pr-3 rounded-full transition-all border outline-none
